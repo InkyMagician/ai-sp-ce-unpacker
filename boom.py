@@ -1,6 +1,7 @@
 import struct
 import os
-import argparse
+import tkinter as tk
+from tkinter import filedialog, messagebox
 from typing import BinaryIO
 from io import BytesIO
 
@@ -17,7 +18,7 @@ def safe_unpack(format: str, buffer: bytes, default=None):
         print(f"Warning: Failed to unpack {format}. Buffer size: {len(buffer)}")
         return default
 
-def extract_aispace_archive(archive_path: str, output_dir: str = None):
+def extract_aispace_archive(archive_path: str, output_dir: str = None, debug: bool = False):
     try:
         with open(archive_path, 'rb') as f:
             file_content = f.read()
@@ -73,17 +74,19 @@ def extract_aispace_archive(archive_path: str, output_dir: str = None):
         header.seek(16, 1)  # Skip four longs
         key_size = safe_unpack('<I', header.read(4), 0)
         print(f"Key size: {key_size}")
-        if key_size > 1000:  # Sanity check
-            print("Warning: Key size is unusually large. Adjusting to 64 bytes.")
-            key_size = 64
-        key = header.read(key_size)
+        data_key = header.read(key_size)
         
         print("Data file decryption key:")
-        print(key.hex())
+        print(data_key.hex())
         
         header.seek(8, 1)  # Skip two longs
         files_count = safe_unpack('<I', header.read(4), 0)
         print(f"Files count: {files_count}")
+
+        # Determine the dat file directory based on the input hed file
+        hed_dir = os.path.dirname(archive_path)
+        hed_name = os.path.splitext(os.path.basename(archive_path))[0]
+        dat_dir = os.path.join(hed_dir, hed_name)
 
         prev_packnum = -1
         data_file = None
@@ -102,7 +105,7 @@ def extract_aispace_archive(archive_path: str, output_dir: str = None):
             if packnum != prev_packnum:
                 if data_file:
                     data_file.close()
-                data_file_name = os.path.join(os.path.dirname(archive_path), 'world', 'field', f"{packnum:04d}.dat")
+                data_file_name = os.path.join(dat_dir, f"{packnum:04d}.dat")
                 print(f"Looking for data file: {data_file_name}")
                 if not os.path.exists(data_file_name):
                     print(f"Warning: Data file {data_file_name} not found. Skipping...")
@@ -121,7 +124,14 @@ def extract_aispace_archive(archive_path: str, output_dir: str = None):
             file_data = data_file.read(size)
             if len(file_data) != size:
                 print(f"Warning: Expected {size} bytes, but read {len(file_data)} bytes.")
-            decrypted_data = rot_decrypt(file_data, key)
+            
+            if debug:
+                print(f"First 16 bytes of encrypted data: {file_data[:16].hex()}")
+            
+            decrypted_data = rot_decrypt(file_data, data_key)
+            
+            if debug:
+                print(f"First 16 bytes of decrypted data: {decrypted_data[:16].hex()}")
 
             with open(full_name, 'wb') as out_file:
                 out_file.write(decrypted_data)
@@ -131,6 +141,9 @@ def extract_aispace_archive(archive_path: str, output_dir: str = None):
         if data_file:
             data_file.close()
 
+        print("Extraction completed successfully!")
+        return True
+
     except FileNotFoundError:
         print(f"Error: The file '{archive_path}' was not found.")
     except PermissionError:
@@ -139,11 +152,33 @@ def extract_aispace_archive(archive_path: str, output_dir: str = None):
         print(f"An unexpected error occurred: {e}")
         import traceback
         traceback.print_exc()
+    
+    return False
+
+def main():
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+
+    # Select input file
+    input_file = filedialog.askopenfilename(title="Select HED file", filetypes=[("HED files", "*.hed")])
+    if not input_file:
+        print("No input file selected. Exiting.")
+        return
+
+    # Select output directory
+    output_dir = filedialog.askdirectory(title="Select output directory")
+    if not output_dir:
+        print("No output directory selected. Exiting.")
+        return
+
+    # Perform extraction
+    success = extract_aispace_archive(input_file, output_dir)
+
+    # Show result message
+    if success:
+        messagebox.showinfo("Extraction Complete", "Files have been successfully extracted.")
+    else:
+        messagebox.showerror("Extraction Failed", "An error occurred during extraction. Please check the console for details.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract files from AI Space archive.")
-    parser.add_argument("archive_path", help="Path to the .hed archive file")
-    parser.add_argument("-o", "--output", help="Output directory for extracted files", default=None)
-    args = parser.parse_args()
-
-    extract_aispace_archive(args.archive_path, args.output)
+    main()
